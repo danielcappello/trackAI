@@ -140,7 +140,7 @@ main.board{ padding:22px 30px 60px; }
   color:var(--paper-dim); border:1px solid var(--line); padding:4px 9px; border-radius:100px;
 }
 
-/* ---------- Top rated (race_ratings.csv) ---------- */
+/* ---------- (unused on this page — carried over from shared styles) ---------- */
 .top-rated{ margin-bottom:18px; }
 .top-rated-row{ display:flex; gap:10px; flex-wrap:wrap; }
 .rated-card{
@@ -491,7 +491,7 @@ tr.form-row.trial td{ color:var(--slate); font-style:italic; }
 
 <div class="leaderboard-section">
   <div class="leaderboard-title">Today’s best value</div>
-  <div class="leaderboard-sub">Biggest gaps between our model’s fair price and the best bookmaker price on offer, across every priced &amp; rated runner on the card.</div>
+  <div class="leaderboard-sub">Biggest gaps between our model’s fair price (built from each horse’s own race history — win/place record, margins, class and distance fit) and the best bookmaker price on offer. This is a simple heuristic, not a calibrated prediction: large gaps are worth a second look, not a guarantee — the model only knows what’s in the results file, not barrier draws, gear changes, market moves or anything else the bookmakers price in.</div>
   <div id="leaderboard"><div class="no-data">Loading\u2026</div></div>
 </div>
 
@@ -523,16 +523,33 @@ tr.form-row.trial td{ color:var(--slate); font-style:italic; }
   "use strict";
 
   // ---------------------------------------------------------------
-  // Data sources — same repo/folder as this page. This tool only needs
-  // fixtures (for bookmaker odds) and ratings (for a model signal) — it
-  // does not load racing_results.csv, since historical form isn't part
-  // of the value/edge comparison here and that file is ~150MB.
+  // Data sources — same repo/folder as this page. This tool derives its
+  // "model" signal entirely from each horse's own historical form in
+  // racing_results.csv (no external ratings file) — win/place performance,
+  // margins, class level and recency, weighted for relevance to today's
+  // race — then compares that to the live bookmaker odds in
+  // racing_fixtures.csv to find where the two disagree.
   // ---------------------------------------------------------------
   var FIXTURES_URL = './racing_fixtures.csv';
-  var RATINGS_URL  = './race_ratings.csv';
+  var RESULTS_URL  = './racing_results.csv';
 
   var RACES = [];           // array of race objects (upcoming fixtures)
-  var RATINGS = {};         // raceid -> array of {horseid, name, score, entrantnumber, fieldsize, raceclass}, sorted desc by score
+  var HORSES = {};          // horseid -> array of run records (see R_* indices below)
+
+  // Run record indices (mirrors the main Form Guide tool):
+  // 0 dateDays, 1 distance, 2 raceclass (string), 3 trialFlag(0/1), 4 finish, 5 fieldsize, 6 margin
+  var R_DATE=0, R_DIST=1, R_CLASS=2, R_TRIAL=3, R_FIN=4, R_FS=5, R_MGN=6;
+
+  // Race class hierarchy — lower rank number = higher grade. Used to weight
+  // a run more heavily when it happened in a stronger class.
+  var CLASS_RANK = {
+    'Group 1':1, 'Group 2':2, 'Group 3':3, 'Listed':4, 'Open':5, 'Quality':6,
+    'BM 90':7, 'BM 84':8, 'BM 78':9, 'BM 78 (CHUTE)':10, 'BM 70':11, 'BM 70 (CHUTE)':12,
+    'BM 64':13, 'BM 64 (CHUTE)':14, 'BM 58':15, 'BM 58 (CHUTE)':16, 'BM 0-57':17,
+    'BM 0-57 (CHUTE)':18, 'Maiden':19, 'Maiden (CHUTE)':20, 'Hurdle':21, 'Steeple':22,
+    'Picnic':23, 'Trial':24
+  };
+  function classRank(name){ return CLASS_RANK.hasOwnProperty(name) ? CLASS_RANK[name] : 19; /* default ~Maiden */ }
 
   var state = {
     activeRaceId: null,
@@ -614,6 +631,7 @@ tr.form-row.trial td{ color:var(--slate); font-style:italic; }
 
   function parseFixtures(text){
     var racesMap = {};
+    var fixtureHorseIds = {};
     var first = true;
     forEachLine(text, function(line){
       if(first){ first=false; return; } // header
@@ -621,6 +639,7 @@ tr.form-row.trial td{ color:var(--slate); font-style:italic; }
       if(row.length < 21) return;
       var rid = row[FIX_COLS.raceid], hid = row[FIX_COLS.horseid];
       if(!rid || !hid) return;
+      fixtureHorseIds[hid] = true;
 
       var race = racesMap[rid];
       if(!race){
@@ -694,11 +713,29 @@ tr.form-row.trial td{ color:var(--slate); font-style:italic; }
       return (a.race||0)-(b.race||0);
     });
 
-    return {races:races};
+    return {races:races, fixtureHorseIds:fixtureHorseIds};
   }
 
-  function parseRatings(text){
-    var byRace = {};
+  function toDaysFromDateStr(d){
+    if(!d) return null;
+    var p = d.split('-');
+    if(p.length!==3) return null;
+    var epoch = Date.UTC(2020,0,1);
+    var dt = Date.UTC(parseInt(p[0],10), parseInt(p[1],10)-1, parseInt(p[2],10));
+    if(isNaN(dt)) return null;
+    return Math.round((dt-epoch)/86400000);
+  }
+
+  function isValidFinish(run){
+    return run[R_FIN]!=null && run[R_FS]!=null && run[R_FIN] <= run[R_FS];
+  }
+  function isWin(run){ return isValidFinish(run) && run[R_FIN]===1; }
+
+  // Streams racing_results.csv and keeps only the compact fields this tool
+  // needs (date, distance, class, trial flag, finish, fieldsize, margin),
+  // filtered down to horses that are actually in today's fixtures.
+  function parseResults(text, fixtureHorseIds){
+    var runsByHorse = {};
     var colIdx = {};
     var first = true;
     forEachLine(text, function(line){
@@ -709,30 +746,105 @@ tr.form-row.trial td{ color:var(--slate); font-style:italic; }
         return;
       }
       var row = parseCsvLine(line);
-      var rid = row[colIdx.raceid];
-      var score = toNum(row[colIdx.score]);
-      if(!rid || score==null) return;
-      var entry = { horseid: row[colIdx.horseid], name: row[colIdx.horse], score: score };
-      (byRace[rid] || (byRace[rid]=[])).push(entry);
+      var hid = row[colIdx.horseid];
+      if(!hid || !fixtureHorseIds[hid]) return;
+      if(row[colIdx.scratched]==='true') return;
+      var rec = [
+        toDaysFromDateStr(row[colIdx.date]),
+        toInt(row[colIdx.distance]),
+        row[colIdx.raceclass] || 'Unknown',
+        isTrialRow(row[colIdx.trialjumpout], row[colIdx.raceclass]) ? 1 : 0,
+        toInt(row[colIdx.finish]),
+        toInt(row[colIdx.fieldsize]),
+        toNum(row[colIdx.margin])
+      ];
+      (runsByHorse[hid] || (runsByHorse[hid]=[])).push(rec);
     });
-    Object.keys(byRace).forEach(function(rid){
-      byRace[rid].sort(function(a,b){ return b.score - a.score; });
+    Object.keys(runsByHorse).forEach(function(hid){
+      runsByHorse[hid].sort(function(a,b){
+        var ad=a[R_DATE], bd=b[R_DATE];
+        if(ad==null && bd==null) return 0;
+        if(ad==null) return 1;
+        if(bd==null) return -1;
+        return bd-ad;
+      });
     });
-    return byRace;
+    return runsByHorse;
+  }
+
+  // =================================================================
+  // Form score — the "model" signal, built entirely from each horse's
+  // own past runs in racing_results.csv (competitive races only, trials
+  // excluded — they're not run at full effort and times/margins aren't
+  // comparable). Deliberately does NOT use starting price or any other
+  // market-derived figure, so it stays an independent view to compare
+  // against the bookmakers, not a reflection of their own price.
+  //
+  // Per run: start from 100 points for a win, lose points for each
+  // length beaten by the winner, then scale by how strong that class of
+  // race was (a competitive effort in Group company counts for more
+  // than the same effort in a Maiden). Each run is then weighted by how
+  // recent it was and how close its distance was to today's race, and
+  // the horse's form score is the weighted average across its last 8
+  // qualifying runs. This is a simple heuristic, not a calibrated
+  // rating — it only ever gets used in relative terms against other
+  // runners in the same race (see computeRaceValue below), never as an
+  // absolute probability on its own.
+  // =================================================================
+  var FORM_RUN_LIMIT = 8;       // consider at most this many recent competitive runs
+  var MARGIN_PENALTY = 3;       // points lost per length behind the winner
+  var MIN_RUN_POINTS = 10;      // floor so a well-beaten run still counts for a little
+  var MIN_QUALIFYING_RUNS = 2;  // need at least this many usable runs to trust a form score
+
+  function classWeight(raceclass){
+    var rank = classRank(raceclass); // 1 (Group 1) .. 24 (Trial)
+    return 1 + (24 - rank) / 24 * 0.4; // Group 1 ~1.4x, Maiden/lowest ~1.0x
+  }
+
+  function recencyWeight(indexFromMostRecent){
+    return 1 / (1 + indexFromMostRecent * 0.15);
+  }
+
+  function distanceWeight(runDistance, targetDistance){
+    if(runDistance==null || targetDistance==null) return 0.7; // unknown trip, count it but discount it
+    var diff = Math.abs(runDistance - targetDistance);
+    if(diff <= 200) return 1;
+    return Math.max(0.4, 1 - (diff-200)/2000);
+  }
+
+  function computeFormScore(horseid, targetDistance){
+    var runs = HORSES[horseid];
+    if(!runs || !runs.length) return null;
+    var competitive = runs.filter(function(r){ return r[R_TRIAL]===0; }).slice(0, FORM_RUN_LIMIT);
+
+    var sumWeighted = 0, sumWeight = 0, qualifying = 0;
+    competitive.forEach(function(r, idx){
+      if(!isValidFinish(r)) return; // DNF / fell / etc — not a usable performance line
+      var marginLengths = isWin(r) ? 0 : (r[R_MGN]!=null ? r[R_MGN] : null);
+      if(marginLengths==null) return; // placed run with no recorded margin — can't score it
+      var perf = Math.max(MIN_RUN_POINTS, 100 - marginLengths*MARGIN_PENALTY);
+      perf *= classWeight(r[R_CLASS]);
+      var w = recencyWeight(idx) * distanceWeight(r[R_DIST], targetDistance);
+      sumWeighted += perf * w;
+      sumWeight += w;
+      qualifying++;
+    });
+
+    if(qualifying < MIN_QUALIFYING_RUNS || sumWeight===0) return null;
+    return {score: sumWeighted/sumWeight, runsUsed: qualifying};
   }
 
   // =================================================================
   // Value / edge model
   //
-  // We only have model ratings (race_ratings.csv) for a race's top-3
-  // rated runners, not the full field, so we can't build a full-field
-  // model probability distribution. Instead: the market's own combined,
-  // overround-removed probability mass for those same 3 runners is
-  // reallocated between them according to their *relative* rating
-  // scores. This keeps the model honest about what it actually knows
-  // (nothing about the rest of the field) while still surfacing where
-  // the model and the market disagree about the pecking order *within*
-  // the runners it has rated.
+  // For every priced, non-scratched runner with a usable form score, the
+  // market's own combined, overround-removed probability mass for THAT
+  // subset of runners is reallocated between them according to their
+  // relative form scores. This keeps the comparison honest about what
+  // the model actually knows — it only re-orders runners it has enough
+  // history on, rather than inventing a view on runners with little or
+  // no form (first starters, long spells, etc), which are shown
+  // separately with market prices only.
   // =================================================================
   function computeRaceValue(race){
     var entrants = race.entrants.filter(function(e){ return !e.scratched; });
@@ -751,26 +863,49 @@ tr.form-row.trial td{ color:var(--slate); font-style:italic; }
     var marketRankByHid = {};
     byPriceAsc.forEach(function(e,i){ marketRankByHid[e.horseid] = i+1; });
 
-    var ratings = (RATINGS[race.raceid]||[]).filter(function(r){ return impliedByHid.hasOwnProperty(r.horseid); });
+    var formed = priced.map(function(e){
+      var f = computeFormScore(e.horseid, race.distance);
+      return f ? {ent:e, score:f.score, runsUsed:f.runsUsed} : null;
+    }).filter(Boolean);
 
-    var ratingTotal = 0;
-    ratings.forEach(function(r){ ratingTotal += r.score; });
-    var marketMassOfRated = 0;
-    ratings.forEach(function(r){ marketMassOfRated += impliedByHid[r.horseid]/rawTotal; });
+    // Turning form scores into shares of probability has to be done
+    // multiplicatively, not linearly. Real win-probability spreads are
+    // highly skewed (a fancied runner might be 10-20x more likely to win
+    // than a backmarker) even when the underlying "ability" scores are
+    // fairly close together, so a plain score/total share badly
+    // under-differentiates the field and manufactures fake "value" on
+    // every longshot. Softmax with a fixed temperature keeps the model
+    // honest about that skew — SCORE_TEMPERATURE is a heuristic, not a
+    // calibrated fit, chosen so a ~15-20pt form-score gap (a clearly
+    // superior recent record) maps to roughly a 3-4x probability ratio.
+    var SCORE_TEMPERATURE = 6;
+    var maxScore = formed.length ? Math.max.apply(null, formed.map(function(x){ return x.score; })) : 0;
+    var expTotal = 0;
+    formed.forEach(function(x){
+      x.expScore = Math.exp((x.score - maxScore)/SCORE_TEMPERATURE);
+      expTotal += x.expScore;
+    });
 
-    var values = ratings.map(function(r, idx){
-      var ent = entrants.filter(function(e){ return e.horseid===r.horseid; })[0];
-      var marketProb = impliedByHid[r.horseid]/rawTotal;
-      var ratingShare = ratingTotal>0 ? r.score/ratingTotal : 0;
-      var modelProb = ratingShare * marketMassOfRated;
+    var marketMassOfFormed = 0;
+    formed.forEach(function(x){ marketMassOfFormed += impliedByHid[x.ent.horseid]/rawTotal; });
+
+    var byRankDesc = formed.slice().sort(function(a,b){ return b.score-a.score; });
+    var formRankByHid = {};
+    byRankDesc.forEach(function(x,i){ formRankByHid[x.ent.horseid] = i+1; });
+
+    var values = formed.map(function(x){
+      var ent = x.ent;
+      var marketProb = impliedByHid[ent.horseid]/rawTotal;
+      var formShare = expTotal>0 ? x.expScore/expTotal : 0;
+      var modelProb = formShare * marketMassOfFormed;
       var fairPrice = modelProb>0 ? 1/modelProb : null;
       var bestPrice = ent.bestWin.price;
       var edgePts = (modelProb - marketProb) * 100;
       var overlayPct = fairPrice ? (bestPrice/fairPrice - 1)*100 : null;
       return {
-        horseid: r.horseid, name: ent.name, barrier: ent.barrier,
-        ratingRank: idx+1, score: r.score,
-        marketRank: marketRankByHid[r.horseid] || null,
+        horseid: ent.horseid, name: ent.name, barrier: ent.barrier,
+        formRank: formRankByHid[ent.horseid], score: x.score, runsUsed: x.runsUsed,
+        marketRank: marketRankByHid[ent.horseid] || null,
         marketProb: marketProb, modelProb: modelProb,
         fairPrice: fairPrice, bestPrice: bestPrice, bestBk: ent.bestWin.bk,
         bestPlace: ent.bestPlace, layPrice: ent.layPrice, odds: ent.odds,
@@ -785,7 +920,7 @@ tr.form-row.trial td{ color:var(--slate); font-style:italic; }
     };
   }
 
-  var VALUE_THRESHOLD = 8; // +/- % overlay before we call it a genuine edge rather than noise
+  var VALUE_THRESHOLD = 20; // +/- % overlay before we call it a genuine edge rather than noise
 
   function edgeQuality(overlayPct){
     if(overlayPct==null) return '';
@@ -937,7 +1072,7 @@ tr.form-row.trial td{ color:var(--slate); font-style:italic; }
     var all = computeLeaderboard();
     var top = all.slice(0,8);
     if(!top.length){
-      el.innerHTML = '<div class="no-data">No value edges detected across today\u2019s priced &amp; rated runners yet.</div>';
+      el.innerHTML = '<div class="no-data">No value edges detected across today\u2019s priced runners with enough form to score yet.</div>';
       return;
     }
     var html = '<div class="leaderboard-row">';
@@ -977,10 +1112,10 @@ tr.form-row.trial td{ color:var(--slate); font-style:italic; }
     var cls = edgeQuality(v.overlayPct);
     var hid = cssEscape(v.horseid);
     var html = '<div class="value-card '+cls+'" data-hid="'+hid+'">'+
-      '<div class="value-rank">#'+v.ratingRank+'</div>'+
+      '<div class="value-rank">#'+v.formRank+'</div>'+
       '<div class="value-main">'+
         '<div class="value-name">'+escapeHtml(v.name)+(v.barrier!=null?' <span class="value-barrier">(Barrier '+v.barrier+')</span>':'')+'</div>'+
-        '<div class="value-sub">Rated '+v.score.toFixed(1)+' · Market rank #'+(v.marketRank||'—')+' · Model prob '+(v.modelProb*100).toFixed(1)+'% vs market '+(v.marketProb*100).toFixed(1)+'%</div>'+
+        '<div class="value-sub">Form score '+v.score.toFixed(1)+' ('+v.runsUsed+' run'+(v.runsUsed>1?'s':'')+') · Market rank #'+(v.marketRank||'—')+' · Model prob '+(v.modelProb*100).toFixed(1)+'% vs market '+(v.marketProb*100).toFixed(1)+'%</div>'+
       '</div>'+
       '<div class="value-prices">'+
         '<div class="vp"><div class="k">Fair price</div><div class="v">'+priceStr(v.fairPrice)+'</div></div>'+
@@ -1040,14 +1175,14 @@ tr.form-row.trial td{ color:var(--slate); font-style:italic; }
       html += '<div class="market-note">'+
         (rv.overroundPct!=null? 'Market margin '+rv.overroundPct.toFixed(1)+'% · ':'') +
         rv.pricedRunners+' of '+rv.totalRunners+' runners priced'+
-        (rv.values.length? ' · '+rv.values.length+' rated runner'+(rv.values.length>1?'s':'')+' compared to market' : ' · no rated runners for this race') +
+        (rv.values.length? ' · '+rv.values.length+' runner'+(rv.values.length>1?'s':'')+' with usable form compared to market' : ' · no runners with enough form for this race') +
       '</div>';
     }
 
     if(race.trialjumpout){
       html += '<div class="no-data">Trials and jumpouts aren\u2019t wagering markets, so there\u2019s no bookmaker price to compare against.</div>';
     } else if(!rv.values.length){
-      html += '<div class="no-data">No rated &amp; priced runners for this race yet — nothing to compare against the market.</div>';
+      html += '<div class="no-data">No runners with enough recent form to score for this race yet — nothing to compare against the market.</div>';
     } else {
       var sortedValues = rv.values.slice().sort(function(a,b){ return (b.overlayPct==null?-999:b.overlayPct)-(a.overlayPct==null?-999:a.overlayPct); });
       html += '<div class="value-board">';
@@ -1059,7 +1194,7 @@ tr.form-row.trial td{ color:var(--slate); font-style:italic; }
     rv.values.forEach(function(v){ ratedIds[v.horseid]=true; });
     var others = race.entrants.filter(function(e){ return !ratedIds[e.horseid]; });
     if(others.length && !race.trialjumpout){
-      html += '<div class="others-section"><div class="section-label">Other runners (not rated)</div><div class="others-list">';
+      html += '<div class="others-section"><div class="section-label">Other runners (not enough recent form to score)</div><div class="others-list">';
       others.forEach(function(e){ html += otherRowHtml(e); });
       html += '</div></div>';
     }
@@ -1244,7 +1379,7 @@ tr.form-row.trial td{ color:var(--slate); font-style:italic; }
     o.innerHTML = '<div class="loading-box">'+
       '<div class="loading-title">Couldn\u2019t load race data</div>'+
       '<div class="loading-sub">'+escapeHtml(err.message)+'</div>'+
-      '<div class="loading-sub">Check that <code>racing_fixtures.csv</code> and <code>race_ratings.csv</code> sit in the same '+
+      '<div class="loading-sub">Check that <code>racing_fixtures.csv</code> and <code>racing_results.csv</code> sit in the same '+
       'folder as this page in the repo, and that it\u2019s being served over http(s) — e.g. GitHub Pages — rather than opened '+
       'directly as a local file.</div></div>';
   }
@@ -1254,12 +1389,9 @@ tr.form-row.trial td{ color:var(--slate); font-style:italic; }
     fetchTextWithProgress(FIXTURES_URL, 'Loading fixtures').then(function(fixturesText){
       var fx = parseFixtures(fixturesText);
       RACES = fx.races;
-      setLoading('Loading ratings', null);
-      return fetchTextWithProgress(RATINGS_URL, 'Loading ratings').then(function(ratingsText){
-        RATINGS = parseRatings(ratingsText);
-      }).catch(function(err){
-        console.warn('Could not load race_ratings.csv:', err);
-        RATINGS = {};
+      setLoading('Loading results history (large file — first load can take a little while)', null);
+      return fetchTextWithProgress(RESULTS_URL, 'Loading results history').then(function(resultsText){
+        HORSES = parseResults(resultsText, fx.fixtureHorseIds);
       });
     }).then(function(){
       hideLoadingOverlay();
