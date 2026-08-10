@@ -265,6 +265,14 @@ table.form{ width:100%; border-collapse:collapse; }
 table.form th{ text-align:left; font-family:'IBM Plex Mono',monospace; font-size:10px; text-transform:uppercase; color:var(--paper-dim); padding:5px 8px; border-bottom:1px solid var(--line);}
 table.form td{ padding:6px 8px; font-size:12px; font-family:'IBM Plex Mono',monospace; border-bottom:1px solid rgba(11,29,22,0.04); }
 tr.form-row.trial td{ color:var(--slate); font-style:italic; }
+
+.compare-note{ font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--paper-dim); margin:-4px 0 12px; line-height:1.6; }
+table.compare{ width:100%; border-collapse:collapse; margin-bottom:24px; }
+table.compare th{ text-align:left; font-family:'IBM Plex Mono',monospace; font-size:9.5px; text-transform:uppercase; letter-spacing:.4px; color:var(--paper-dim); padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:bottom; }
+table.compare td{ padding:10px 8px; font-size:12px; border-bottom:1px solid var(--line); vertical-align:top; }
+table.compare tbody tr:hover{ background:var(--ledger-2); }
+table.compare .horse-name{ font-size:13.5px; }
+table.compare .value-sub{ margin-top:2px; }
 .finpos{ display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; border-radius:50%; font-weight:700; font-size:11px;}
 .finpos.win{ background:var(--turf); color:#0B1D16; }
 .finpos.place{ background:var(--brass); color:#0B1D16; }
@@ -300,11 +308,11 @@ tr.form-row.trial td{ color:var(--slate); font-style:italic; }
 
   /* ---- Turn wide data tables into stacked, labeled cards so nothing needs
      left-right scrolling on a phone or narrow tablet screen. ---- */
-  table.entrants, table.odds, table.h2h, table.form{ display:block; width:100%; }
-  table.entrants thead, table.odds thead, table.h2h thead, table.form thead{ display:none; }
-  table.entrants tbody, table.odds tbody, table.h2h tbody, table.form tbody{ display:block; width:100%; }
+  table.entrants, table.odds, table.h2h, table.form, table.compare{ display:block; width:100%; }
+  table.entrants thead, table.odds thead, table.h2h thead, table.form thead, table.compare thead{ display:none; }
+  table.entrants tbody, table.odds tbody, table.h2h tbody, table.form tbody, table.compare tbody{ display:block; width:100%; }
 
-  table.entrants tr.entrant-row, table.odds tr, table.h2h tr, table.form tr{
+  table.entrants tr.entrant-row, table.odds tr, table.h2h tr, table.form tr, table.compare tr{
     display:flex; flex-wrap:wrap; width:100%; gap:8px 14px;
     border:1px solid var(--line); border-radius:8px;
     margin-bottom:10px; padding:12px; background:var(--ledger-2);
@@ -313,13 +321,13 @@ tr.form-row.trial td{ color:var(--slate); font-style:italic; }
   table.entrants tr.detail-row{ display:block; border:none; margin:0; padding:0; background:none; }
   table.entrants tr.detail-row td{ display:block; padding:0; border:none; }
 
-  table.entrants td, table.odds td, table.h2h td, table.form td{
+  table.entrants td, table.odds td, table.h2h td, table.form td, table.compare td{
     display:block; padding:0; border:none; text-align:left; min-width:0;
   }
   /* the first cell in each row (horse identity / bookmaker / rival / date)
      reads as the card's title line, so it always gets its own full row */
   table.entrants td:first-child, table.odds td:first-child,
-  table.h2h td:first-child, table.form td:first-child{
+  table.h2h td:first-child, table.form td:first-child, table.compare td:first-child{
     flex:1 1 100%;
   }
   /* Entrants table: each remaining cell is already a deliberate group
@@ -328,21 +336,22 @@ tr.form-row.trial td{ color:var(--slate); font-style:italic; }
   table.entrants td:not(:first-child){
     flex:1 1 100%;
   }
-  /* Detail-panel tables (odds/h2h/form) have many small single-value columns,
+  /* Detail-panel and comparison tables have many small single-value columns,
      so those flow left-to-right and wrap to a new row once they run out of
      room, rather than stacking one field per line. */
   table.odds td:not(:first-child), table.h2h td:not(:first-child),
-  table.form td:not(:first-child){
+  table.form td:not(:first-child), table.compare td:not(:first-child){
     flex:1 1 112px; min-width:112px;
   }
   table.entrants td[data-label]::before,
   table.odds td[data-label]::before,
   table.h2h td[data-label]::before,
-  table.form td[data-label]::before{
+  table.form td[data-label]::before,
+  table.compare td[data-label]::before{
     content: attr(data-label); display:block; font-size:9px; text-transform:uppercase;
     letter-spacing:.6px; color:var(--paper-dim); font-family:'IBM Plex Mono',monospace; margin-bottom:3px;
   }
-  table.entrants td .chip-row, table.odds td{ text-align:left; }
+  table.entrants td .chip-row, table.odds td, table.compare td{ text-align:left; }
   .class-up-badge{ white-space:normal; }
 }
 
@@ -565,7 +574,12 @@ tr.form-row.trial td{ color:var(--slate); font-style:italic; }
   // Run record indices:
   // 0 dateDays, 1 distance, 2 raceclass, 3 trialFlag(0/1), 4 finish, 5 fieldsize,
   // 6 margin, 7 track, 8 winningtime (centiseconds), 9 trackcondition, 10 raceid
-  var R_DATE=0, R_DIST=1, R_CLASS=2, R_TRIAL=3, R_FIN=4, R_FS=5, R_MGN=6, R_TRACK=7, R_WT=8, R_COND=9, R_RID=10;
+  // Run record indices:
+  // 0 dateDays, 1 distance, 2 raceclass, 3 trialFlag(0/1), 4 finish, 5 fieldsize,
+  // 6 margin, 7 track, 8 winningtime (centiseconds), 9 trackcondition, 10 raceid,
+  // 11 jockey, 12 trainer, 13 position800, 14 position400 (running position at that mark)
+  var R_DATE=0, R_DIST=1, R_CLASS=2, R_TRIAL=3, R_FIN=4, R_FS=5, R_MGN=6, R_TRACK=7, R_WT=8, R_COND=9, R_RID=10,
+      R_JOCKEY=11, R_TRAINER=12, R_POS800=13, R_POS400=14;
 
   // Race class hierarchy — lower rank number = higher grade. Used to weight
   // a run more heavily when it happened in a stronger class.
@@ -759,6 +773,98 @@ tr.form-row.trial td{ color:var(--slate); font-style:italic; }
     return run[R_FIN]!=null && run[R_FS]!=null && run[R_FIN] <= run[R_FS];
   }
   function isWin(run){ return isValidFinish(run) && run[R_FIN]===1; }
+  function isPlace(run){ return isValidFinish(run) && run[R_FIN]<=3; }
+
+  // =================================================================
+  // Comparative field analytics — win/place record broken down by
+  // track, trip, going, class, jockey and trainer, plus a sectional
+  // running-style profile from position800/position400. This is
+  // separate from the value/edge model above: it's descriptive form
+  // data for comparing runners side by side, not a probability input.
+  // =================================================================
+  function computeSummary(runs){
+    var starts = runs.length, wins = 0, places = 0;
+    runs.forEach(function(r){ if(isWin(r)) wins++; if(isPlace(r)) places++; });
+    var winPct = starts ? Math.round(wins/starts*100) : 0;
+    var placePct = starts ? Math.round(places/starts*100) : 0;
+    return {starts:starts, wins:wins, places:places, winPct:winPct, placePct:placePct};
+  }
+
+  function summaryQuality(summary){
+    if(summary.starts < 2) return 'none';
+    if(summary.winPct >= 25 || summary.placePct >= 50) return 'good';
+    if(summary.starts >= 3 && summary.wins === 0 && summary.placePct < 20) return 'poor';
+    return '';
+  }
+
+  function statChip(label, summary){
+    var cls = 'stat-chip ' + (summary.starts ? summaryQuality(summary) : 'none');
+    var val = summary.starts ? (summary.wins+'-'+summary.places+'-'+summary.starts) : '—';
+    var sub = summary.starts ? (summary.winPct+'% W') : 'no runs';
+    return '<div class="'+cls+'" title="'+escapeHtml(label)+'"><div class="k">'+escapeHtml(label)+'</div><div class="v">'+val+'</div><div class="k">'+sub+'</div></div>';
+  }
+
+  // Running-style profile from sectional positions. position800/400 are the
+  // horse's running position (rank) at those marks, not times — comparing
+  // them to the final finish position shows whether a horse typically races
+  // handy and holds on, or comes from the back of the field.
+  var SECTIONAL_RUN_LIMIT = 8;
+  function computeSectionalProfile(competitiveRuns){
+    var runs = competitiveRuns.slice(0, SECTIONAL_RUN_LIMIT);
+    var n = 0, sumEarlyPct = 0, sumLateGain = 0, sumHomeGain = 0;
+    runs.forEach(function(r){
+      if(!isValidFinish(r)) return;
+      if(r[R_POS800]==null || r[R_POS400]==null || r[R_FS]==null || r[R_FS]<=1) return;
+      var earlyPct = (r[R_POS800]-1) / (r[R_FS]-1); // 0 = led at 800m, 1 = last at 800m
+      var lateGain = r[R_POS800] - r[R_FIN];         // + = improved from 800m to the line
+      var homeGain = r[R_POS400] - r[R_FIN];         // + = improved from 400m to the line
+      sumEarlyPct += earlyPct; sumLateGain += lateGain; sumHomeGain += homeGain;
+      n++;
+    });
+    if(n < 2) return null;
+    var avgEarlyPct = sumEarlyPct/n, avgLateGain = sumLateGain/n, avgHomeGain = sumHomeGain/n;
+    var posLabel = avgEarlyPct < 0.35 ? 'Handy' : (avgEarlyPct > 0.65 ? 'Backmarker' : 'Midfield');
+    var styleLabel = avgLateGain >= 1.3 ? 'strong finish' : (avgLateGain <= -1 ? 'fades late' : 'holds on');
+    return {runsUsed:n, avgEarlyPct:avgEarlyPct, avgLateGain:avgLateGain, avgHomeGain:avgHomeGain,
+            label: posLabel+', '+styleLabel};
+  }
+
+  function sectionalChip(profile){
+    var cls = 'stat-chip ' + (profile ? (profile.avgLateGain>=1.3?'good':(profile.avgLateGain<=-1.5?'poor':'')) : 'none');
+    var val = profile ? profile.label : '—';
+    var sub = profile ? (profile.runsUsed+' runs · '+(profile.avgLateGain>=0?'+':'')+profile.avgLateGain.toFixed(1)+' late') : 'no data';
+    return '<div class="'+cls+'" title="Running style from sectional positions"><div class="k">Sectional</div><div class="v" style="font-size:10.5px;">'+escapeHtml(val)+'</div><div class="k">'+sub+'</div></div>';
+  }
+
+  function computeComparativeRow(ent, race){
+    var runs = HORSES[ent.horseid] || [];
+    var competitive = runs.filter(function(r){ return r[R_TRIAL]===0; });
+    var recent = competitive.slice(0,12);
+
+    var trackRuns = competitive.filter(function(r){ return r[R_TRACK]===race.track; });
+    var tripRuns = competitive.filter(function(r){
+      return race.distance!=null && r[R_DIST]!=null && Math.abs(r[R_DIST]-race.distance)<=100;
+    });
+    var goingRuns = competitive.filter(function(r){
+      return conditionBucket(r[R_COND]) === conditionBucket(race.trackcondition);
+    });
+    var classRuns = competitive.filter(function(r){ return r[R_CLASS]===race.raceclass; });
+    var jockeyRuns = ent.jockey ? competitive.filter(function(r){ return r[R_JOCKEY] && r[R_JOCKEY]===ent.jockey; }) : [];
+    var trainerRuns = ent.trainer ? competitive.filter(function(r){ return r[R_TRAINER] && r[R_TRAINER]===ent.trainer; }) : [];
+
+    return {
+      horseid: ent.horseid, name: ent.name, barrier: ent.barrier,
+      jockey: ent.jockey, trainer: ent.trainer, bestWin: ent.bestWin, bestPlace: ent.bestPlace, layPrice: ent.layPrice,
+      overall: computeSummary(recent),
+      track: computeSummary(trackRuns),
+      trip: computeSummary(tripRuns),
+      going: computeSummary(goingRuns),
+      cls: computeSummary(classRuns),
+      withJockey: computeSummary(jockeyRuns),
+      withTrainer: computeSummary(trainerRuns),
+      sectional: computeSectionalProfile(competitive)
+    };
+  }
 
   // Streams racing_results.csv and keeps only the compact fields this tool
   // needs (date, distance, class, trial flag, finish, fieldsize, margin),
@@ -789,7 +895,11 @@ tr.form-row.trial td{ color:var(--slate); font-style:italic; }
         row[colIdx.track] || 'Unknown',
         toInt(row[colIdx.winningtime]),
         row[colIdx.trackcondition] || '',
-        row[colIdx.raceid]
+        row[colIdx.raceid],
+        row[colIdx.jockey] || '',
+        row[colIdx.trainer] || '',
+        toInt(row[colIdx.position800]),
+        toInt(row[colIdx.position400])
       ];
       (runsByHorse[hid] || (runsByHorse[hid]=[])).push(rec);
     });
@@ -1371,6 +1481,50 @@ tr.form-row.trial td{ color:var(--slate); font-style:italic; }
       '</div>';
   }
 
+  function marketMiniChip(ent){
+    var w = ent.bestWin, p = ent.bestPlace;
+    var html = '<div class="chip-row">';
+    html += '<div class="odds-chip'+(w?'':' none')+'"><div class="k">Win</div><div class="v">'+(w?priceStr(w.price):'—')+'</div><div class="bk">'+(w?escapeHtml(w.bk):'')+'</div></div>';
+    html += '<div class="odds-chip'+(p?'':' none')+'"><div class="k">Place</div><div class="v">'+(p?priceStr(p.price):'—')+'</div><div class="bk">'+(p?escapeHtml(p.bk):'')+'</div></div>';
+    html += '</div>';
+    return html;
+  }
+
+  // One-stop comparative analytics table: every non-scratched runner, side
+  // by side, broken down by track/trip/going/class/jockey/trainer record
+  // and sectional running style — independent of the value/edge model above,
+  // this is purely "what does this horse's history say" for eyeballing the
+  // whole field at once.
+  function compareTableHtml(race){
+    var entrants = race.entrants.filter(function(e){ return !e.scratched; });
+    if(!entrants.length) return '<div class="no-data">No runners to compare.</div>';
+    var rows = entrants.map(function(e){ return computeComparativeRow(e, race); });
+
+    var html = '<div class="section-label">Field analysis — form by track, trip, going, class, jockey &amp; trainer</div>';
+    html += '<div class="compare-note">Win-place-starts from each horse\u2019s own competitive history (trials excluded). '+
+            '"Going" matches today\u2019s track condition group (Firm/Good, Soft, Heavy, Synthetic). "Sectional" reads running position at the 800m and 400m marks against where the horse finished.</div>';
+    html += '<table class="compare"><thead><tr>'+
+            '<th>Horse</th><th>Market</th><th>Overall</th><th>Track</th><th>Trip</th><th>Going</th><th>Class</th><th>Jockey</th><th>Trainer</th><th>Sectional</th>'+
+            '</tr></thead><tbody>';
+    rows.forEach(function(r){
+      html += '<tr>'+
+        '<td><div class="horse-name">'+escapeHtml(r.name)+(r.barrier!=null?' <span class="value-barrier">(Barrier '+r.barrier+')</span>':'')+'</div>'+
+          '<div class="value-sub">'+escapeHtml(r.jockey||'')+' · '+escapeHtml(r.trainer||'')+'</div></td>'+
+        '<td data-label="Market">'+marketMiniChip(r)+'</td>'+
+        '<td data-label="Overall (last 12)">'+statChip('Overall', r.overall)+'</td>'+
+        '<td data-label="This track">'+statChip('Track', r.track)+'</td>'+
+        '<td data-label="This trip (\u00b1100m)">'+statChip('Trip', r.trip)+'</td>'+
+        '<td data-label="This going">'+statChip('Going', r.going)+'</td>'+
+        '<td data-label="This class">'+statChip('Class', r.cls)+'</td>'+
+        '<td data-label="With '+escapeHtml(r.jockey||'this jockey')+'">'+statChip('Jockey', r.withJockey)+'</td>'+
+        '<td data-label="With '+escapeHtml(r.trainer||'this trainer')+'">'+statChip('Trainer', r.withTrainer)+'</td>'+
+        '<td data-label="Sectional profile">'+sectionalChip(r.sectional)+'</td>'+
+        '</tr>';
+    });
+    html += '</tbody></table>';
+    return html;
+  }
+
   function renderRace(race){
     var board = document.getElementById('board');
     var rv = computeRaceValue(race);
@@ -1403,13 +1557,8 @@ tr.form-row.trial td{ color:var(--slate); font-style:italic; }
       html += '</div>';
     }
 
-    var ratedIds = {};
-    rv.values.forEach(function(v){ ratedIds[v.horseid]=true; });
-    var others = race.entrants.filter(function(e){ return !ratedIds[e.horseid]; });
-    if(others.length && !race.trialjumpout){
-      html += '<div class="others-section"><div class="section-label">Other runners (not enough recent form to score)</div><div class="others-list">';
-      others.forEach(function(e){ html += otherRowHtml(e); });
-      html += '</div></div>';
+    if(!race.trialjumpout){
+      html += compareTableHtml(race);
     }
 
     board.innerHTML = html;
